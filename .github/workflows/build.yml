@@ -1,0 +1,49 @@
+on:
+  workflow_dispatch:
+    inputs:
+      otpVersion:
+        description: "OTP version (e.g. 26.1.2)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Ensure that there is a jinterface published corresponding to input otpVersion
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: done if already published
+        id: already_published_check
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OTP_VERSION: ${{ inputs.otpVersion }}
+        run: |
+          echo OTP_VERSION: $OTP_VERSION
+          mvn dependency:get -Dartifact=com.mechanical-orchard:jinterface:$OTP_VERSION -DremoteRepositories=github::default::https://maven.pkg.github.com/mechanical-orchard/jinterface
+
+      - name: install dependencies
+        if: steps.already_published_check.outcome == 'failure'
+        run: sudo apt update && sudo apt install -y --no-install-recommends ncurses-dev dpkg-dev dpkg gcc g++ libc-dev make ca-certificates
+
+      - name: make OtpErlang.jar
+        if: steps.already_published_check.outcome == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OTP_VERSION: ${{ inputs.otpVersion }}
+        run: |
+          curl -fSL -o otp-src.tar.gz "https://github.com/erlang/otp/archive/OTP-$OTP_VERSION.tar.gz"
+          export ERL_TOP=`pwd`/otp-OTP-${OTP_VERSION}
+          tar -xzf otp-src.tar.gz
+          cd $ERL_TOP
+          ./configure
+          cd lib/jinterface
+          make
+          mvn deploy:deploy-file -DrepositoryId=github -Dfile=priv/OtpErlang.jar -Durl=https://maven.pkg.github.com/mechanical-orchard/jinterface -DgroupId=com.mechanical-orchard -DartifactId=jinterface -Dversion=$OTP_VERSION -Dpackaging=jar
